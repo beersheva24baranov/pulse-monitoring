@@ -1,0 +1,103 @@
+{
+  // Use IntelliSense to learn about possible attributes.
+  // Hover to view descriptions of existing attributes.
+  // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "java",
+      "name": "Main",
+      "request": "launch",
+      "mainClass": "telran.monitoring.Main",
+      "projectName": "pulse-values-imitator"
+    },
+    {
+      "type": "java",
+      "name": "Main",
+      "request": "launch",
+      "mainClass": "telran.monitoring.Main",
+      "projectName": "pulse-values-receiver"
+    },
+    {
+      "type": "aws-sam",
+      "request": "direct-invoke",
+      "name": "pulse_monitoring:PulseAbnormalValuesRecognizerFunction (java21)",
+      "invokeTarget": {
+        "target": "template",
+        "templatePath": "${workspaceFolder}/template.yaml",
+        "logicalId": "PulseAbnormalValuesRecognizerFunction"
+      },
+      "lambda": {
+        "payload": {
+          "path": "${workspaceFolder}/events/pulse_values_for_abnormal.json"
+        },
+        "environmentVariables": {
+          "LOGGER_LEVEL": "finest",
+          "STREAM_NAME": "abnormal-pulse-values",
+          "STREAM_CLASS_NAME": "telran.monitoring.TestStream",
+          "RANGE_PROVIDER_CLASS": "telran.monitoring.RangeProviderClientMap"
+        }
+      }
+    },
+    {
+      "type": "aws-sam",
+      "request": "direct-invoke",
+      "name": "pulse_monitoring:JumpRecognizerFunction (java21)",
+      "invokeTarget": {
+        "target": "template",
+        "templatePath": "${workspaceFolder}/template.yaml",
+        "logicalId": "JumpRecognizerFunction"
+      },
+      "lambda": {
+        "payload": {
+          "path": "${workspaceFolder}/events/pulse_values.json"
+        },
+        "environmentVariables": {
+          "LOGGER_LEVEL": "finest",
+          "STREAM_NAME": "jump-pulse-value",
+          "STREAM_CLASS_NAME": "telran.monitoring.TestStream"
+        }
+      }
+    },
+    {
+      "type": "aws-sam",
+      "request": "direct-invoke",
+      "name": "pulse_monitoring:PulseValuesReducerFunction (java21)",
+      "invokeTarget": {
+        "target": "template",
+        "templatePath": "${workspaceFolder}/template.yaml",
+        "logicalId": "PulseValuesReducerFunction"
+      },
+      "lambda": {
+        "payload": {
+          "path": "${workspaceFolder}/events/pulse_values.json"
+        },
+        "environmentVariables": {
+          "LOGGER_LEVEL": "finest",
+          "STREAM_NAME": "average-pulse-values",
+          "REDUCING_SIZE": "2",
+          "REDUCING_TIME_WINDOW": "60000000000000",
+          "STREAM_CLASS_NAME": "telran.monitoring.TestStream"
+        }
+      }
+    },
+    {
+      "type": "aws-sam",
+      "request": "direct-invoke",
+      "name": "pulse_monitoring:RangeDataProviderFunction (java21)",
+      "invokeTarget": {
+        "target": "template",
+        "templatePath": "${workspaceFolder}/template.yaml",
+        "logicalId": "RangeDataProviderFunction"
+      },
+      "lambda": {
+        "payload": {
+          "path": "${workspaceFolder}/events/range_data_provider.json"
+        },
+        "environmentVariables": {
+          "DB_PASSWORD": "12345.Com"
+        }
+      }
+    }
+  ]
+}

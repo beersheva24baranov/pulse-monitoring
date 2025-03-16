@@ -1,105 +1,104 @@
 package telran.monitoring;
-import java.net.*;
-import java.util.*;
+
 import telran.monitoring.api.SensorData;
 import telran.monitoring.logging.Logger;
 import telran.monitoring.logging.LoggerStandard;
-import java.util.stream.IntStream;
 import java.net.*;
 import java.util.HashMap;
-import java.util.Map;
-import java.util.concurrent.ThreadLocalRandom;
+import java.util.Random;
 import java.util.stream.IntStream;
 
 public class Main {
     static Logger logger = new LoggerStandard("imitator");
-
     static final int MIN_PULSE_VALUE = 40;
     static final int MAX_PULSE_VALUE = 240;
     static final long TIMEOUT_SEND = 500;
-    static final int TIMEOUT_RESPONSE = 1000;
+    static final int TIMEOUT_RESPONSE = 5000;
     static final String DEFAULT_HOST = "localhost";
     static final int DEFAULT_PORT = 5000;
     static final int DEFAULT_N_PATIENTS = 10;
-    static final int DEFAULT_N_PACKETS = 50;
-
-    // Параметры скачков
-    static final double JUMP_PROB = 0.1; // 10% вероятность скачка
-    static final double MIN_JUMP_PERCENT = 10; // Мин. 10% от текущего значения
-    static final double MAX_JUMP_PERCENT = 100; // Макс. 100% от текущего значения
-    static final double JUMP_POSITIVE_PROB = 0.7; // 70% вероятность положительного скачка
-
+    static final int DEFAULT_N_PACKETS = 100;
+    static final int JUMP_PROB = 10;
+    static final int MIN_JUMP_PERCENT = 10;
+    static final int MAX_JUMP_PERCENT = 100;
+    static final int JUMP_POSITIVE_PROB = 70;
+    static final long PATIENT_ID_FOR_INFO_LOGGING = 3;
+    static HashMap<Long, Integer> patientIdPulseValue = new HashMap<>();
     static DatagramSocket socket = null;
-    static Map<Long, Integer> lastPulseValues = new HashMap<>(); // Запоминаем последний пульс пациентов
 
-    public static void main(String[] args) {
-        try {
-            socket = new DatagramSocket();
-            socket.setSoTimeout(TIMEOUT_RESPONSE);
-            IntStream.rangeClosed(1, DEFAULT_N_PACKETS).forEach(Main::send);
-        } catch (SocketException e) {
-            System.err.println("Error creating socket: " + e.getMessage());
-        } finally {
-            if (socket != null && !socket.isClosed()) {
-                socket.close();
-            }
-        }
+    public static void main(String[] args) throws Exception {
+        socket = new DatagramSocket();
+        socket.setSoTimeout(TIMEOUT_RESPONSE);
+        IntStream.rangeClosed(1, DEFAULT_N_PACKETS).forEach(Main::send);
     }
 
     static void send(int i) {
         SensorData sensor = getRandomSensorData(i);
+        logger.log("finest", sensor.toString());
+        if (sensor.patientId() == PATIENT_ID_FOR_INFO_LOGGING) {
+            logger.log("info", String.format("Pulse value for patient %d is %d",
+                    PATIENT_ID_FOR_INFO_LOGGING, sensor.value()));
+        }
         String jsonStr = sensor.toString();
         try {
             udpSend(jsonStr);
+            Thread.sleep(TIMEOUT_SEND);
         } catch (Exception e) {
-            logger.log("severe", "Error sending packet: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 
-    private static void udpSend(String jsonStr) throws Exception {
-        logger.log("finest", "Data to be sent: " + jsonStr);
+    static void udpSend(String jsonStr) throws Exception {
+        logger.log("finest", String.format("data to be sent is %s", jsonStr));
         byte[] bufferSend = jsonStr.getBytes();
         DatagramPacket packet = new DatagramPacket(bufferSend, bufferSend.length,
                 InetAddress.getByName(DEFAULT_HOST), DEFAULT_PORT);
         socket.send(packet);
-
-        try {
-            socket.receive(packet);
-            String receivedData = new String(packet.getData(), 0, packet.getLength());
-            if (!jsonStr.equals(receivedData)) {
-                throw new Exception("Received packet doesn't match the sent one");
-            }
-        } catch (SocketTimeoutException e) {
-            logger.log("warning", "Response timeout: no data received");
+        socket.receive(packet);
+        if (!jsonStr.equals(new String(packet.getData()))) {
+            throw new Exception("received packet doesn't equal the sent one");
         }
     }
 
-    private static SensorData getRandomSensorData(int i) {
+    static SensorData getRandomSensorData(int i) {
         long patientId = getRandomNumber(1, DEFAULT_N_PATIENTS);
-        int pulseValue = getRealisticPulseValue(patientId);
+        int value = getRandomPulseValue(patientId);
+        ;
         long timestamp = System.currentTimeMillis();
-        return new SensorData(patientId, pulseValue, timestamp);
+        SensorData res = new SensorData(patientId, value, timestamp);
+        return res;
     }
 
-    private static int getRealisticPulseValue(long patientId) {
-        int lastPulse = lastPulseValues.getOrDefault(patientId, getRandomNumber(MIN_PULSE_VALUE, MAX_PULSE_VALUE));
+    private static int getRandomPulseValue(long patientId) {
+        int valueRes = patientIdPulseValue.computeIfAbsent(patientId,
+				k -> getRandomNumber(MIN_PULSE_VALUE, MAX_PULSE_VALUE));
+		if (chance(JUMP_PROB)) {
+			valueRes = getValueWithJump(valueRes);
+			patientIdPulseValue.put(patientId, valueRes);
+		}
 
-        if (Math.random() < JUMP_PROB) {
-            int jumpPercent = getRandomNumber((int) MIN_JUMP_PERCENT, (int) MAX_JUMP_PERCENT);
-            int jumpValue = (lastPulse * jumpPercent) / 100;
-
-            if (Math.random() < JUMP_POSITIVE_PROB) {
-                lastPulse = Math.min(MAX_PULSE_VALUE, lastPulse + jumpValue);
-            } else {
-                lastPulse = Math.max(MIN_PULSE_VALUE, lastPulse - jumpValue);
-            }
-        }
-
-        lastPulseValues.put(patientId, lastPulse);
-        return lastPulse;
+		return valueRes;
     }
 
-    private static int getRandomNumber(int minValue, int maxValue) {
-        return ThreadLocalRandom.current().nextInt(minValue, maxValue + 1);
+    static int getRandomNumber(int minValue, int maxValue) {
+        return new Random().nextInt(minValue, maxValue + 1);
     }
+    private static boolean chance(int prob) {
+
+		return getRandomNumber(0, 99) < prob;
+	}
+    private static int getValueWithJump(int previousValue) {
+		int jumpPercent = getRandomNumber(MIN_JUMP_PERCENT, MAX_JUMP_PERCENT);
+		int jumpValue = previousValue * jumpPercent / 100;
+		if (!chance(JUMP_POSITIVE_PROB)) {
+			jumpValue = -jumpValue;
+		}
+		int res = previousValue + jumpValue;
+		if (res < MIN_PULSE_VALUE) {
+			res = MIN_PULSE_VALUE;
+		} else if (res > MAX_PULSE_VALUE) {
+			res = MAX_PULSE_VALUE;
+		}
+		return res;
+	}
 }

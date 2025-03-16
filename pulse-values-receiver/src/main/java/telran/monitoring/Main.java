@@ -2,93 +2,69 @@ package telran.monitoring;
 
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
-import java.util.logging.ConsoleHandler;
-import java.util.logging.Logger;
-import java.util.logging.Level;
+import java.util.Map;
 
+import org.apache.log4j.BasicConfigurator;
+
+import telran.monitoring.api.SensorData;
+import telran.monitoring.logging.Logger;
+import telran.monitoring.logging.LoggerStandard;
 
 public class Main {
+
     private static final int PORT = 5000;
     private static final int MAX_SIZE = 1500;
+    private static final int WARNING_LOG_VALUE = 220;
+    private static final int ERROR_LOG_VALUE = 230;
+    private static final String DEFAULT_PULSE_VALUES_STREAM = "pulse_values";
+        private static final String DEFAULT_STREAM_CLASS_NAME = "telran.monitoring.DynamoDbStreamSensorData";
+        static Logger logger = new LoggerStandard("receiver");
+        static Map<String, String> env = System.getenv();
+    
+        public static void main(String[] args) {
+            BasicConfigurator.configure();
+            try (DatagramSocket socket = new DatagramSocket(PORT);) {
+                @SuppressWarnings("unchecked")
+                MiddlewareDataStream<SensorData> stream = MiddlewareDataStreamFactory.getStream(getDataStreamClassName(), getTableName());
+                byte[] buffer = new byte[MAX_SIZE];
+                while (true) {
+                    DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
+                    socket.receive(packet);
+                    String jsonStr = new String(packet.getData());
+                    logPulseValue(jsonStr);
+    
+                    socket.send(packet);
+                    stream.publish(SensorData.of(jsonStr));
 
-    private static final Logger logger = Logger.getLogger(Main.class.getName());
-
-    public static void main(String[] args) {
-        setupLogger();
-
-        try (DatagramSocket socket = new DatagramSocket(PORT)) {
-            logger.info("UDP-сервер запущен на порту " + PORT);
-            byte[] buffer = new byte[MAX_SIZE];
-
-            while (true) {
-                DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
-                socket.receive(packet);
-
-                // Получаем строку с данными
-                String receivedData = new String(packet.getData(), 0, packet.getLength()).trim();
-                logger.finest("Получено JSON: " + receivedData);
-
-                // Обрабатываем JSON вручную
-                processSensorData(receivedData);
-
-                // Отправляем обратно
-                byte[] responseData = receivedData.getBytes();
-                DatagramPacket responsePacket = new DatagramPacket(
-                        responseData, responseData.length, packet.getAddress(), packet.getPort());
-
-                socket.send(responsePacket);
-                logger.info("Отправлено обратно: " + receivedData);
+                }
+            } catch (Exception e) {
+                logger.log("severe", e.toString());
             }
-        } catch (Exception e) {
-            logger.severe("Ошибка сервера: " + e.getMessage());
+    
+        }
+    
+        private static String getTableName() {
+            return env.getOrDefault("STREAM_NAME", DEFAULT_PULSE_VALUES_STREAM);
+        }
+    
+        private static String getDataStreamClassName() {
+            return env.getOrDefault("DATA_STREAM_CLASS_NAME", DEFAULT_STREAM_CLASS_NAME);
+    }
+
+    private static void logPulseValue(String jsonStr) {
+        logger.log("finest", jsonStr);
+        SensorData sensorData = SensorData.of(jsonStr);
+        int value = sensorData.value();
+        if (value >= WARNING_LOG_VALUE && value <= ERROR_LOG_VALUE) {
+            logValue("warning", sensorData);
+        } else if (value > ERROR_LOG_VALUE) {
+            logValue("error", sensorData);
         }
     }
 
-    @SuppressWarnings("unused")
-    private static void processSensorData(String json) {
-        try {
-            // Парсим JSON вручную
-            long patientId = extractLong(json, "patientId");
-            int value = extractInt(json, "value");
-            long timestamp = extractLong(json, "timestamp");
-
-            if (value > 230) {
-                logger.severe("Критическое значение пульса: patientId=" + patientId + ", value=" + value);
-            } else if (value > 220) {
-                logger.warning("Высокое значение пульса: patientId=" + patientId + ", value=" + value);
-            }
-        } catch (Exception e) {
-            logger.warning("Ошибка обработки JSON: " + e.getMessage());
-        }
+    private static void logValue(String level, SensorData sensorData) {
+        logger.log(level, String.format("patient %d has pulse value greater than %d", sensorData.patientId(),
+                level.equals("warning") ? WARNING_LOG_VALUE : ERROR_LOG_VALUE));
     }
 
-    private static long extractLong(String json, String key) throws Exception {
-        String value = extractValue(json, key);
-        return Long.parseLong(value);
-    }
-
-    private static int extractInt(String json, String key) throws Exception {
-        String value = extractValue(json, key);
-        return Integer.parseInt(value);
-    }
-
-    private static String extractValue(String json, String key) throws Exception {
-        int keyIndex = json.indexOf("\"" + key + "\":");
-        if (keyIndex == -1) throw new Exception("Ключ " + key + " не найден в JSON");
-
-        int start = json.indexOf(":", keyIndex) + 1;
-        int end = json.indexOf(",", start);
-        if (end == -1) end = json.indexOf("}", start);
-        if (end == -1) throw new Exception("Ошибка парсинга JSON");
-
-        return json.substring(start, end).replaceAll("[^0-9]", "").trim();
-    }
-
-    private static void setupLogger() {
-        ConsoleHandler handler = new ConsoleHandler();
-        handler.setLevel(Level.ALL);
-        logger.addHandler(handler);
-        logger.setLevel(Level.ALL);
-        logger.setUseParentHandlers(false);
-    }
 }
